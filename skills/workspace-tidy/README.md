@@ -29,29 +29,32 @@ Its remote group is a fact that does not.
 ## Install
 
 ```
-npx skills add utkarshchoubeycs/skills --skill workspace-tidy
+npx skills add utkarshchoubeycs/skills --skill workspace-tidy -g    # user-wide
+npx skills add utkarshchoubeycs/skills --skill workspace-tidy       # this project only
 ```
 
-Or copy this folder to `~/.claude/skills/workspace-tidy/`. Claude Code picks it up on the next session. Then ask: "audit my workspace", "arrange this
-workspace", "add a worktree for feat/x", "which worktrees are stale".
+Or copy this folder to `~/.claude/skills/workspace-tidy/`. Claude Code picks it up on the next
+session. Then ask: "audit my workspace", "arrange this workspace", "add a worktree for feat/x",
+"which worktrees are stale".
 
 ## Audit only, no agent
 
 ```
-bash ~/.claude/skills/workspace-tidy/audit.sh ~/my-workspace
-bash ~/.claude/skills/workspace-tidy/audit.sh ~/my-workspace --mr   # adds open MR/PR counts via glab or gh (untested)
+bash ~/.claude/skills/workspace-tidy/scripts/audit.sh ~/my-workspace
+bash ~/.claude/skills/workspace-tidy/scripts/audit.sh ~/my-workspace --mr   # adds open MR/PR counts via glab or gh
 ```
 
-Output: four sections.
+Needs bash 3.2+ and git 2.17+. Uses `column` for alignment when present, plain tabs otherwise.
 
 | Section | Columns |
 |---|---|
-| repos | path, host, group, name, branch, default branch, dirty files, upstream state, days since last commit, open MRs, expected path |
-| worktrees | main repo, path, branch, state (ok or dead), placement, dirty, upstream, age |
-| drift | wrong folder name, wrong path, worktree outside `.worktrees/`, dead link, plain folder, loose file |
-| cleanup candidates | dead worktree links; clean + pushed worktrees 14 days old; extra clones of a remote already present (dead copies); repos idle 90 days. Never dirty, unpushed or detached. Evidence only, it removes nothing |
+| repos | path, host, group, name, branch, default branch, dirty files, upstream state, days since last commit, open MRs, expected path, refs (local branches, stashes, tags) |
+| worktrees | main repo, path, branch, state (ok, locked, missing, prunable), placement, dirty, upstream, age |
+| drift | no origin, wrong folder name, wrong path, duplicate clones, worktree outside `.worktrees/<repo>/<slug>`, dead or missing link, plain folder, hidden folder, loose file |
+| cleanup candidates | git-confirmed dead links; clean + pushed worktrees 14 days old; duplicate clones with their local refs listed; repos idle 90 days. Locked, dirty, unpushed, detached or unknown items never appear. Evidence only, it removes nothing |
 
-The script is read-only. It runs on macOS bash 3.2 and any Linux bash. No network unless `--mr`.
+The script sets `GIT_OPTIONAL_LOCKS=0` and runs only read commands. With `--mr`, glab or gh may
+write their own config on first use. Any `unknown` value means git failed for that item.
 
 ## Per-workspace config
 
@@ -66,18 +69,19 @@ group  acme/platform-v2  platform-v2
 group  oldcorp           legacy
 ```
 
-See `examples/workspace.conf`.
+Longest matching `group` prefix wins. See `examples/workspace.conf`.
 
 ## What it will not do
 
-Delete, prune, force, or remove a branch on its own. Every removal is one item the user names.
+Delete, prune, force, or remove a branch on its own. Every removal is one item the user names,
+or one exact prune preview the user approves.
 
 ## Credits
 
-Ideas borrowed from the virtual-workspace, git-wt and WalletConnect worktree skills:
-a manifest at the root, worktrees outside the repo, `git worktree move` over `mv`,
-and remote-branch deletion as a separate opt-in.
+Ideas borrowed from the superpowers `using-git-worktrees`, git-wt and WalletConnect worktree
+skills: a manifest at the root, worktrees outside the repo, `git worktree move` over `mv`,
+lock awareness, and remote-branch deletion as a separate opt-in.
 
 ## Licence
 
-MIT
+MIT, see `LICENSE` in this folder.

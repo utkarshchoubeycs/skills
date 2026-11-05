@@ -1,8 +1,8 @@
 ---
 name: workspace-tidy
-description: "Arrange and keep tidy a folder that holds many git repos and worktrees. Use when the user asks to organise, clean up, audit or de-duplicate a multi-repo workspace, add a repo or worktree to one, find where a repo lives, or list stale worktrees. Rules: one folder per remote group, folder name = remote repo name, every worktree under one hidden dir, non-repo files under docs/. Never deletes without the user's explicit word."
+description: "Arranges and keeps tidy a folder that holds many git repos and worktrees. Use when the user asks to organise, clean up, audit or de-duplicate a multi-repo workspace, add a repo or worktree to one, find where a repo lives, or list stale worktrees. Rules: one folder per remote group, folder name = remote repo name, every worktree under one hidden dir, non-repo files under docs/. Never deletes without the user's explicit word."
 license: MIT
-compatibility: "bash 3.2+, git 2.17+; optional column(1), glab or gh for --mr"
+compatibility: "bash 3.2+, git 2.31+; optional column(1), glab or gh for --mr"
 ---
 
 # workspace-tidy
@@ -13,9 +13,11 @@ workspace one layout rule and one read-only audit, and it moves things into plac
 
 ## When not to use
 
-- A single repo. Use a plain worktree skill such as superpowers `using-git-worktrees`.
+- A single repo. Use a plain worktree skill such as superpowers `using-git-worktrees`, or the
+  harness's own worktree tool (Claude Code `EnterWorktree`) when the user wants a scratch
+  worktree for an agent.
 - Worktrees that an agent harness manages itself (for example `.claude/worktrees/agent-*`).
-  Report them, never move or remove them.
+  The audit labels them `harness`. Report them, never move or remove them.
 - Git submodules. The audit lists them like any repo; moving them is out of scope.
 
 ## The layout
@@ -47,7 +49,8 @@ Rules, in order of priority:
 
 Known limits, declare them in the workspace README when they apply: two repos with the same
 name in different groups share a worktree folder name; branches `feat/x` and `feat-x` share a
-slug. Resolve by hand with a suffix and note it.
+slug. Resolve by hand with a suffix and note it. The audit scans 5 folder levels and skips
+`node_modules`; deeper repos are listed as unscanned.
 
 Why remote namespace and not architecture layers: layers live inside a service, not across
 repos. A repo's layer changes; its remote group does not. The rule needs no judgement.
@@ -56,6 +59,7 @@ repos. A repo's layer changes; its remote group does not. The rule needs no judg
 
 Plain `key value` lines, first two whitespace-separated fields only. Read with awk, never
 sourced. Missing file means defaults: `worktrees .worktrees`, `docs docs`, `root-group root`.
+Every value must be a relative path with no `..`; the audit refuses the file otherwise.
 
 ```
 worktrees  .worktrees
@@ -74,40 +78,51 @@ place yet.
 ## Procedures
 
 Every procedure starts by fixing the workspace root once: the folder the user names, else the
-nearest ancestor of the current dir that holds `workspace.conf`, else ask. Call it `$WS`.
-The script lives beside this file: `$SKILL_DIR/scripts/audit.sh`.
+nearest ancestor of the current dir that holds `workspace.conf`, else the current dir. Say
+which one you picked. Call it `$WS`. In the commands below, `.worktrees` and `docs` stand for
+the values in `workspace.conf`.
+
+The audit script is in the `scripts/` folder beside this file. In Claude Code that is
+`${CLAUDE_SKILL_DIR}/scripts/audit.sh`; other harnesses: resolve the path of this SKILL.md.
 
 ### Audit (read-only, always first)
 
 ```
-bash "$SKILL_DIR/scripts/audit.sh" "$WS"         # no network
-bash "$SKILL_DIR/scripts/audit.sh" "$WS" --mr    # also count open MRs/PRs via glab or gh
+bash "${CLAUDE_SKILL_DIR}/scripts/audit.sh" "$WS"         # no network
+bash "${CLAUDE_SKILL_DIR}/scripts/audit.sh" "$WS" --mr    # also count open MRs/PRs via glab or gh
 ```
 
 Four sections: repos, worktrees, drift, cleanup candidates. Read the drift list with the user
-before any move. Any `unknown` value means git failed there; treat that item as untouchable
-until the user looks at it. With `--mr`, glab or gh may write their own config files; the
-script itself never writes.
+before any move. Any `unknown`, `broken` or `?` value means git failed there; treat that item
+as untouchable until the user looks at it. With `--mr`, glab or gh may write their own config
+files; the script itself never writes.
 
 ### Arrange an existing workspace
 
-1. Run the audit. Build two tables for the user: **renames** (today → proposed, one row per
-   repo and per worktree) and **deletes** (item → evidence). The user vetoes renames and
-   names each delete. Nothing moves before that answer.
-2. Precondition check, stop on any hit: a destination path that already exists; a repo or
-   worktree with `dirty` not `0`; any `unknown`; any worktree in state `missing`; a `locked`
-   worktree. Show the hits and ask.
-3. Create the group folders and `docs/`.
+1. Run the audit and keep its output as the baseline (it goes into `docs/` at step 6). Build
+   two tables for the user: **renames** (today → proposed, one row per repo and per worktree)
+   and **deletes** (item → evidence). In worktree targets `<repo>` is the main repo's folder
+   name **after** its rename. A `DETACHED` worktree has no slug: list it, ask. The user vetoes
+   renames and names each delete. Nothing moves before that answer.
+2. Precondition check, stop on any hit and ask: a destination path that already exists, or has
+   an ancestor that is itself a repo; a repo or worktree with `dirty` not `0`; any `unknown`,
+   `broken` or `?`; any worktree in state `missing`; a `locked` worktree. An untracked folder
+   that is a registered worktree of that repo does not count as dirty. A pre-existing
+   `prunable` link is a cleanup candidate, not a stop.
+3. Create the group folders, `docs/`, and `mkdir -p "$WS/.worktrees/<repo>"` for every repo
+   that gets a worktree (`git worktree move` does not create parents).
 4. Move each main repo with `mv <old> <new>`. Worktrees nested inside it move with it; that
    is the one case where a worktree moves by `mv`. Then inside the moved repo run
    `git worktree repair <new-path-of-each-nested-worktree>`, then a bare
-   `git worktree repair`. Verify with `git worktree list`: no `prunable` lines.
-5. Move each remaining worktree with `git worktree move <old> "$WS/.worktrees/<repo>/<slug>"`,
-   never `mv`.
-6. Move loose files and plain folders into `docs/`. Never overwrite: if the target exists,
-   stop and ask.
+   `git worktree repair`. Verify with `git worktree list`: no **new** `prunable` lines.
+5. Move each remaining worktree whose place is not `in` or `harness`:
+   `git -C "$WS/<group>/<repo>" worktree move <old> "$WS/.worktrees/<repo>/<slug>"`, never `mv`.
+6. Move loose files and plain folders into `docs/`. Hidden folders at root: report only.
+   Never overwrite: if the target exists, stop and ask.
 7. Write `README.md`, `CLAUDE.md`, `workspace.conf`. If any of them exists, keep its content
-   and add to it. Run the audit again. Drift must be zero except items the user chose to keep.
+   and add to it. If the root is a git repo, check every group folder and `.worktrees/` with
+   `git -C "$WS" check-ignore -q <path>` and add the misses to `.gitignore`. Run the audit
+   again. Drift must be zero except items the user chose to keep.
 8. Tell the user which tool configs held absolute paths (editor workspaces, agent project
    lists, shell bookmarks). The audit does not touch them.
 
@@ -118,32 +133,42 @@ give. Never pick a name by hand. If the path exists, stop and ask.
 
 ### Add a worktree
 
+New branch, after `git -C "$WS/<group>/<repo>" fetch`:
+
 ```
-git -C "$WS/<group>/<repo>" worktree add "$WS/.worktrees/<repo>/<slug>" -b <branch> <start-point>
+git -C "$WS/<group>/<repo>" worktree add "$WS/.worktrees/<repo>/<slug>" -b <branch> origin/<default-branch>
 ```
 
-Use an absolute path, never `..`. `<start-point>` is `origin/<default-branch>` after a
-`git fetch`, unless the user names one. If the branch already exists, drop `-b`. If the
-destination exists, stop and ask. Verify with `git worktree list`. If the workspace `CLAUDE.md`
-declares the worktree dir, use it without asking.
+Branch already exists (no `-b`, no start point):
+
+```
+git -C "$WS/<group>/<repo>" worktree add "$WS/.worktrees/<repo>/<slug>" <branch>
+```
+
+Use an absolute path, never `..`. If the destination exists, stop and ask. Verify with
+`git worktree list`. If the workspace `CLAUDE.md` declares the worktree dir, use it without
+asking. A branch created from `origin/<default>` is not pushed until the user pushes it; the
+audit says `never-pushed` until a remote branch of the same name exists.
 
 ### Clean up
 
 The audit lists candidates with evidence. Never list, and never touch: locked, dirty,
-unpushed, detached, missing or `unknown` items. For each candidate the user approves:
+unpushed, detached, missing, harness, open-MR or `unknown` items. For each candidate the user
+approves:
 
 | Candidate | Command | Then |
 |---|---|---|
-| stale worktree | `git worktree remove <path>` | offer `git branch -d <branch>` as a second yes; if git refuses, stop, never `-D`. Offer remote branch delete as a third yes. |
-| dead link (prunable) | show `git worktree prune --dry-run` for that repo; the user approves the whole preview, since prune cannot take one path | `git worktree prune`, then show `git worktree list` |
-| duplicate clone | show its local branches, stashes and tags first (`refs` column) | `rm -r <path>` only after the user confirms those are disposable |
+| stale worktree | `git -C <main> worktree remove <path>` | offer `git -C <main> branch -d <branch>` as a second yes; if git refuses, stop, never `-D`. Offer `git -C <main> push origin --delete <branch>` as a third yes. |
+| dead link (prunable) | show `git -C <main> worktree prune --dry-run`; the user approves the whole preview, since prune cannot take one path | `git -C <main> worktree prune`, then show `git -C <main> worktree list` |
+| duplicate clone | run `git -C <clone> worktree list`: any line besides the clone itself → stop. Then show its local branches, stashes and tags (`refs` column) | `rm -r <path>` only after the user confirms those are disposable. Git objects are read-only files, so an interactive `rm -r` prompts per file; answer the prompts or run it non-interactively, never add `-f` by reflex |
 | idle repo | none | report only; archiving is the user's call |
 
 ## Hard stops
 
 - No delete, no branch removal, no `--force`, no prune without the user naming the item or
   approving the exact prune preview.
-- Locked, dirty, unpushed, detached, missing or `unknown` items are never moved or removed.
+- Locked, dirty, unpushed, detached, missing, harness-managed or `unknown` items are never
+  moved or removed.
 - Worktrees move with `git worktree move`. The only exception is a worktree nested inside a
   main repo that moves as a whole, followed by `git worktree repair`.
 - Never overwrite an existing path. Stop and ask.

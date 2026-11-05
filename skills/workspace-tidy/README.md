@@ -11,11 +11,11 @@ One layout rule and one read-only audit for a folder full of git repos and workt
 ```
 <workspace>/
   README.md  CLAUDE.md  workspace.conf
-  platform/      auth-service  billing  go-commons
-  platform-v2/   auth-service-v2  go-commons-v2
-  legacy/        clinical-workflow  old-scheduler
+  platform/      auth-service  billing  shared-libs
+  platform-v2/   auth-service-v2  shared-libs-v2
+  legacy/        old-portal  old-scheduler
   docs/          diagrams/  notes/  security/
-  .worktrees/    auth-service/feat-webhooks  go-commons-v2/fix-routes
+  .worktrees/    auth-service/feat-webhooks  shared-libs-v2/fix-routes
 ```
 
 1. Folder name = remote repo name.
@@ -33,6 +33,9 @@ npx skills add utkarshchoubeycs/skills --skill workspace-tidy -g    # user-wide
 npx skills add utkarshchoubeycs/skills --skill workspace-tidy       # this project only
 ```
 
+Needs Node 22.20+. The installer asks which agent to install for; add `-a claude-code -y` to skip
+the prompt.
+
 Or copy this folder to `~/.claude/skills/workspace-tidy/`. Claude Code picks it up on the next
 session. Then ask: "audit my workspace", "arrange this workspace", "add a worktree for feat/x",
 "which worktrees are stale".
@@ -44,17 +47,22 @@ bash ~/.claude/skills/workspace-tidy/scripts/audit.sh ~/my-workspace
 bash ~/.claude/skills/workspace-tidy/scripts/audit.sh ~/my-workspace --mr   # adds open MR/PR counts via glab or gh
 ```
 
-Needs bash 3.2+ and git 2.17+. Uses `column` for alignment when present, plain tabs otherwise.
+Needs bash 3.2+ and git 2.31+ (it refuses older git: `locked` and `prunable` worktree states
+need 2.31). Scans 5 folder levels, skips `node_modules`. Uses `column` for alignment when
+present, plain tabs otherwise.
 
 | Section | Columns |
 |---|---|
-| repos | path, host, group, name, branch, default branch, dirty files, upstream state, days since last commit, open MRs, expected path, refs (local branches, stashes, tags) |
-| worktrees | main repo, path, branch, state (ok, locked, missing, prunable), placement, dirty, upstream, age |
-| drift | no origin, wrong folder name, wrong path, duplicate clones, worktree outside `.worktrees/<repo>/<slug>`, dead or missing link, plain folder, hidden folder, loose file |
-| cleanup candidates | git-confirmed dead links; clean + pushed worktrees 14 days old; duplicate clones with their local refs listed; repos idle 90 days. Locked, dirty, unpushed, detached or unknown items never appear. Evidence only, it removes nothing |
+| repos | path, host, group, name, branch, default branch, dirty files, upstream state, days since last commit, open MRs, expected path, refs (local branches, stashes, tags, linked worktrees) |
+| worktrees | main repo, path, branch, state (ok, locked, missing, prunable, unknown), placement (in, harness, outside), dirty, upstream, age, open MRs |
+| drift | unreadable repo, no origin, wrong folder name, wrong path, duplicate clones, worktree outside `.worktrees/<repo>/<slug>`, dead or missing link, unscanned deep repo, plain folder, hidden folder, loose file |
+| cleanup candidates | git-confirmed dead links; clean + pushed worktrees whose last commit is 14 days old; duplicate clones with no linked worktrees, local refs listed; repos idle 90 days. Locked, dirty, unpushed, detached, harness-managed, open-MR or unknown items never appear. Evidence only, it removes nothing |
 
-The script sets `GIT_OPTIONAL_LOCKS=0` and runs only read commands. With `--mr`, glab or gh may
-write their own config on first use. Any `unknown` value means git failed for that item.
+The script sets `GIT_OPTIONAL_LOCKS=0` and runs only read commands. `pushed` means a remote
+branch of the same name exists and holds HEAD; a branch that only tracks `origin/main` reads
+`never-pushed`. With `--mr`, glab or gh may write their own config on first use; in repos with
+`core.fsmonitor` on, `git status` may start the monitor daemon. Any `unknown`, `broken` or `?`
+value means git failed for that item.
 
 ## Per-workspace config
 

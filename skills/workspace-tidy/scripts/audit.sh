@@ -69,7 +69,10 @@ default_branch() {
   echo "?"
 }
 branch_of() { git -C "$1" symbolic-ref --short HEAD 2>/dev/null || { git -C "$1" rev-parse --verify -q HEAD >/dev/null 2>&1 && echo "DETACHED" || echo "unknown"; }; }
-dirty_of()  { local o; o=$(git -C "$1" status --porcelain --untracked-files=normal 2>/dev/null) || { echo "unknown"; return; }; printf '%s' "$o" | grep -c . || true; }
+dirty_of()  {  # $1 dir, $2 optional newline list of relative paths to ignore (registered worktrees inside the repo)
+  local o; o=$(git -C "$1" status --porcelain --untracked-files=normal 2>/dev/null) || { echo "unknown"; return; }
+  printf '%s\n' "$o" | SKIP="${2:-}" awk 'BEGIN{n=split(ENVIRON["SKIP"],s,"\n")} NF{p=substr($0,4); k=1; for(i=1;i<=n;i++) if(s[i]!="" && index(s[i],p)==1) k=0; c+=k} END{print c+0}'   # ENVIRON: -v mangles newlines and backslashes
+}
 age_days()  { local t; t=$(git -C "$1" log -1 --format=%ct 2>/dev/null) && [ -n "$t" ] && echo $(( (NOW - t) / 86400 )) || echo "unknown"; }
 upstream_of() {  # pushed | ahead=N | never-pushed | detached | unknown. "pushed" needs a remote-tracking ref of the same branch name.
   local d="$1" b u n rem
@@ -77,7 +80,8 @@ upstream_of() {  # pushed | ahead=N | never-pushed | detached | unknown. "pushed
   case "$b" in DETACHED) echo "detached"; return ;; unknown) echo "unknown"; return ;; esac
   u=$(git -C "$d" rev-parse --symbolic-full-name '@{upstream}' 2>/dev/null) || u=""
   rem=$(git -C "$d" config "branch.$b.remote" 2>/dev/null) || rem=""
-  [ -n "$rem" ] && [ "$rem" != "." ] && [ "$u" = "refs/remotes/$rem/$b" ] || u="refs/remotes/origin/$b"   # a local or renamed upstream is not proof of a push
+  # pushed = HEAD is contained in a remote branch of the SAME name: the configured upstream if it is one, else origin/<b>.
+  [ -n "$rem" ] && [ "$rem" != "." ] && [ "$u" = "refs/remotes/$rem/$b" ] || u="refs/remotes/origin/$b"
   git -C "$d" show-ref --verify --quiet "$u" 2>/dev/null || { echo "never-pushed"; return; }
   n=$(git -C "$d" rev-list --count "$u..HEAD" 2>/dev/null) || { echo "unknown"; return; }
   [ "$n" = "0" ] && echo "pushed" || echo "ahead=$n"
@@ -102,10 +106,10 @@ mr_of() {  # open MR/PR count for a branch; only with --mr; "unchecked" when no 
 
 # ---- worktrees from a repo's own registry; states: ok | locked | missing | prunable | unknown (git failed) ----
 WT_ROWS=()
-scan_worktrees() {  # $1 main dir, $2 label, $3 host. Appends rows; sets W_COUNT = linked worktrees, or "?" when git failed
-  local d="$1" main="$2" host="$3" mainname out line p br prun lock state want rest place up dirty age mr
-  mainname=$(basename "$d"); W_COUNT=0
-  out=$(git -C "$d" worktree list --porcelain 2>/dev/null) || { W_COUNT="?"; WT_ROWS+=("$(printf '%s\t?\t-\tunknown\t-\t-\t-\t-\t-' "$main")"); return; }
+scan_worktrees() {  # $1 main dir, $2 label, $3 host, $4 default branch. Appends rows; sets W_COUNT (linked worktrees, "?" when git failed)
+  local d="$1" main="$2" host="$3" def="$4" mainname out line p br prun lock state want rest place up dirty age mr note
+  mainname=$(basename "$d"); W_COUNT=0; INNER_WT=""   # INNER_WT: worktrees nested inside the main repo, excluded from its dirty count
+  out=$(git -C "$d" worktree list --porcelain 2>/dev/null) || { W_COUNT="?"; WT_ROWS+=("$(printf '%s\t?\t-\tunknown\t-\t-\t-\t-\t-\t-' "$main")"); return; }
   p=""; br=""; prun=""; lock=""
   while IFS= read -r line; do
     case "$line" in
@@ -118,6 +122,8 @@ scan_worktrees() {  # $1 main dir, $2 label, $3 host. Appends rows; sets W_COUNT
         [ -z "$p" ] && continue
         [ "$p" = "$d" ] && { p=""; continue; }
         W_COUNT=$((W_COUNT+1))
+        case "$p" in "$d"/*) INNER_WT="$INNER_WT${p#"$d"/}/"$'\n' ;; esac
+        [ "$br" = "$def" ] && note="default-branch" || note="-"
         if [ -n "$lock" ]; then state="locked"
         elif [ -n "$prun" ]; then state="prunable"
         elif [ ! -d "$p" ]; then state="missing"
@@ -132,7 +138,7 @@ scan_worktrees() {  # $1 main dir, $2 label, $3 host. Appends rows; sets W_COUNT
         if { [ "$state" = "ok" ] || [ "$state" = "locked" ]; } && [ -d "$p" ]; then
           up=$(upstream_of "$p"); dirty=$(dirty_of "$p"); age=$(age_days "$p"); mr=$(mr_of "$p" "$br" "$host")
         else up="-"; dirty="-"; age="-"; mr="-"; fi
-        WT_ROWS+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$main" "$(rel "$p")" "$br" "$state" "$place" "$dirty" "$up" "$age" "$mr")")
+        WT_ROWS+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$main" "$(rel "$p")" "$br" "$state" "$place" "$dirty" "$up" "$age" "$mr" "$note")")
         p="" ;;
     esac
   done < <(printf '%s\n\n' "$out")
@@ -153,7 +159,7 @@ while IFS= read -r g; do
 done < <(find "$ROOT" -mindepth 1 -maxdepth $((MAXDEPTH+3)) -name node_modules -prune -o -name .git -print 2>/dev/null | sort)
 while IFS= read -r p; do
   [ "$p" = "$ROOT/$DOCS_DIR" ] && continue
-  [ -n "$(find "$p" -maxdepth 4 -name .git -print -quit 2>/dev/null)" ] && continue
+  [ -n "$(find "$p" -maxdepth "$MAXDEPTH" -name .git -print -quit 2>/dev/null)" ] && continue
   [ -n "$(find "$p" -name node_modules -prune -o -name .git -print -quit 2>/dev/null)" ] && { DEEP+=("$p"); continue; }
   case "$(basename "$p")" in .*) [ "$p" = "$ROOT/$WT_DIR" ] || [ "$p" = "$ROOT/.git" ] || [ "$p" = "$ROOT/.claude" ] || HIDDEN+=("$p") ;; *) PLAIN+=("$p") ;; esac
 done < <(find "$ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
@@ -166,7 +172,7 @@ done < <(find "$ROOT" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | sort)
 # row fields: path host group name key branch default dirty upstream age mr expected refs
 ROWS=()
 if [ -e "$ROOT/.git" ]; then   # the root may itself be a small repo; list its worktrees under main "."
-  url=$(git -C "$ROOT" remote get-url origin 2>/dev/null) || url=""; parse_remote "$url"; scan_worktrees "$ROOT" "." "$R_HOST"
+  url=$(git -C "$ROOT" remote get-url origin 2>/dev/null) || url=""; parse_remote "$url"; scan_worktrees "$ROOT" "." "$R_HOST" "$(default_branch "$ROOT")"
 fi
 for d in ${REPOS[@]+"${REPOS[@]}"}; do
   # an unreadable .git makes git fall through to a parent repo; only trust it when the toplevel is this folder
@@ -174,12 +180,12 @@ for d in ${REPOS[@]+"${REPOS[@]}"}; do
     ROWS+=("$(printf '%s\tbroken\t.\tunknown\tbroken/./unknown\t-\t-\t-\t-\t-\t-\t-\t-' "$(rel "$d")")"); continue
   fi
   if url=$(git -C "$d" remote get-url origin 2>/dev/null); then parse_remote "$url"; else parse_remote ""; fi
-  b=$(branch_of "$d")
-  scan_worktrees "$d" "$(rel "$d")" "$R_HOST"
+  b=$(branch_of "$d"); def=$(default_branch "$d")
+  scan_worktrees "$d" "$(rel "$d")" "$R_HOST" "$def"
   case "$R_HOST" in unknown|broken|file) exp="-" ;; *) exp="$(group_for "$R_GROUP")/$R_NAME" ;; esac
   ROWS+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
-    "$(rel "$d")" "$R_HOST" "${R_GROUP:-.}" "$R_NAME" "$R_HOST/$R_GROUP/$R_NAME" "$b" "$(default_branch "$d")" \
-    "$(dirty_of "$d")" "$(upstream_of "$d")" "$(age_days "$d")" "$(mr_of "$d" "$b" "$R_HOST")" \
+    "$(rel "$d")" "$R_HOST" "${R_GROUP:-.}" "$R_NAME" "$R_HOST/$R_GROUP/$R_NAME" "$b" "$def" \
+    "$(dirty_of "$d" "$INNER_WT")" "$(upstream_of "$d")" "$(age_days "$d")" "$(mr_of "$d" "$b" "$R_HOST")" \
     "$exp" "$(local_refs "$d") ${W_COUNT}w")")
 done
 
@@ -189,7 +195,7 @@ echo "## repos (${#ROWS[@]})"
 for d in ${EXTERNAL_WT[@]+"${EXTERNAL_WT[@]}"}; do echo "worktree of a repo outside this workspace: $(rel "$d")"; done
 
 echo; echo "## worktrees (${#WT_ROWS[@]}, registered by the repos above)"
-{ printf 'main\tworktree\tbranch\tstate\tplace\tdirty\tupstream\tage_d\tmr\n'; for r in ${WT_ROWS[@]+"${WT_ROWS[@]}"}; do printf '%s\n' "$r"; done; } | fmt
+{ printf 'main\tworktree\tbranch\tstate\tplace\tdirty\tupstream\tage_d\tmr\tnote\n'; for r in ${WT_ROWS[@]+"${WT_ROWS[@]}"}; do printf '%s\n' "$r"; done; } | fmt
 
 # ---- drift: everything that breaks the layout rule ----
 echo; echo "## drift"
@@ -207,7 +213,7 @@ DUPES=$(for r in ${ROWS[@]+"${ROWS[@]}"}; do printf '%s\n' "$r" | awk -F"$TAB" '
   | awk -F"$TAB" '{paths[$1]=paths[$1] (paths[$1]?", ":"") $2; c[$1]++} END {for (k in c) if (c[k]>1) print k": "paths[k]}' | sort)
 [ -n "$DUPES" ] && while IFS= read -r line; do echo "duplicate clones of $line"; n=$((n+1)); done < <(printf '%s\n' "$DUPES")
 for r in ${WT_ROWS[@]+"${WT_ROWS[@]}"}; do
-  IFS="$TAB" read -r main p br state place dirty up age mr < <(printf '%s\n' "$r")
+  IFS="$TAB" read -r main p br state place dirty up age mr note < <(printf '%s\n' "$r")
   case "$state" in
     unknown)  echo "git worktree list failed, check by hand: $main"; n=$((n+1)) ;;
     prunable) [ "$place" = "harness" ] && echo "dead harness worktree link, report only: $main -> $p" || echo "dead worktree link (git says prunable): $main -> $p"; n=$((n+1)) ;;
@@ -226,21 +232,24 @@ echo "drift items: $n"
 echo; echo "## cleanup candidates (evidence only, nothing is removed)"
 HARNESS_DEAD=$(for r in ${WT_ROWS[@]+"${WT_ROWS[@]}"}; do printf '%s\n' "$r" | awk -F"$TAB" '$4=="prunable" && $5=="harness" {print $1}'; done | sort -u)
 for r in ${WT_ROWS[@]+"${WT_ROWS[@]}"}; do
-  IFS="$TAB" read -r main p br state place dirty up age mr < <(printf '%s\n' "$r")
+  IFS="$TAB" read -r main p br state place dirty up age mr note < <(printf '%s\n' "$r")
   [ "$place" = "harness" ] && continue
   case "$state" in
     prunable)   # prune is repo-wide and cannot skip a dead harness link in the same repo
-      if printf '%s\n' "$HARNESS_DEAD" | grep -qxF "$main"; then echo "prune blocked, same repo has a dead harness link: $main -> $p"
+      if printf '%s\n' "$HARNESS_DEAD" | grep -qxF -e "$main"; then echo "prune blocked, same repo has a dead harness link: $main -> $p"
       else echo "prune (dead link, git-confirmed): $main -> $p"; fi; continue ;;
     ok) ;;
     *) continue ;;
   esac
   case "$mr" in 0|-) ;; *) continue ;; esac   # open MR, or MR check failed under --mr
+  [ "$note" = "default-branch" ] && continue   # never suggest removing the default branch
   [ "$dirty" = "0" ] && [ "$up" = "pushed" ] && [ "$age" -ge 14 ] 2>/dev/null && echo "stale worktree, clean, pushed, last commit ${age}d ago: $p ($br)"
 done
 for r in ${ROWS[@]+"${ROWS[@]}"}; do
   IFS="$TAB" read -r path host group name key b def dirty up age mr exp refs < <(printf '%s\n' "$r")
   [ "$dirty" = "0" ] && [ "$up" = "pushed" ] || continue
+  case "$age" in unknown) continue ;; esac
+  case "$path" in .claude/worktrees/*|*/.claude/worktrees/*) continue ;; esac   # harness-owned
   case "$refs" in *\?*) continue ;; esac                                   # a ref count failed: untouchable
   [ "${refs##* }" = "0w" ] || continue                                      # linked worktrees: untouchable
   case "$mr" in 0|-) ;; *) continue ;; esac                                 # open MR, or MR check failed under --mr

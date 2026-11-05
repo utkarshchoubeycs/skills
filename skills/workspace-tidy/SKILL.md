@@ -103,12 +103,14 @@ files; the script itself never writes.
 1. Run the audit and keep its output as the baseline (it goes into `docs/` at step 6). Build
    two tables for the user: **renames** (today → proposed, one row per repo and per worktree)
    and **deletes** (item → evidence). In worktree targets `<repo>` is the main repo's folder
-   name **after** its rename. A `DETACHED` worktree has no slug: list it, ask. The user vetoes
-   renames and names each delete. Nothing moves before that answer.
+   name **after** its rename. A `DETACHED` worktree has no slug: list it, ask. A duplicate clone
+   that is not a candidate (it holds unpushed work or worktrees) stays where it is: list it under
+   **kept, user's call** with its evidence. The user vetoes renames and names each delete. Nothing
+   moves before that answer.
 2. Precondition check, stop on any hit and ask: a destination path that already exists, or has
    an ancestor that is itself a repo (the workspace root as the optional small repo is fine); a repo or worktree with `dirty` not `0`; any `unknown`,
-   `broken` or `?`; any worktree in state `missing`; a `locked` worktree. An untracked folder
-   that is a registered worktree of that repo does not count as dirty. A pre-existing
+   `broken` or `?`; any worktree in state `missing`; a `locked` worktree. The audit already
+   excludes registered worktrees nested in a repo from its dirty count. A pre-existing
    `prunable` link is a cleanup candidate, not a stop.
 3. Create the group folders, `docs/`, and `mkdir -p "$WS/.worktrees/<repo>"` for every repo
    that gets a worktree (`git worktree move` does not create parents).
@@ -159,8 +161,8 @@ approves:
 
 | Candidate | Command | Then |
 |---|---|---|
-| stale worktree | `git -C <main> worktree remove <path>` | offer `git -C <main> branch -d <branch>` as a second yes; if git refuses, stop, never `-D`. Offer `git -C <main> push origin --delete <branch>` as a third yes. |
-| dead link (prunable) | show `git -C <main> worktree prune --dry-run`; the user approves the whole preview, since prune cannot take one path. If the preview lists a harness path (`.claude/worktrees/`), stop: the harness owns that entry | `git -C <main> worktree prune`, then show `git -C <main> worktree list` |
+| stale worktree | `git -C <main> worktree remove <path>`; say first that it also deletes ignored files there (`.env`, build output) | offer `git -C <main> branch -d <branch>` as a second yes; if git refuses, stop, never `-D`. Offer `git -C <main> push origin --delete <branch>` as a third yes. Never for the default branch: the audit marks those `default-branch` and skips them. |
+| dead link (prunable) | only when the audit prints `prune (dead link, git-confirmed)` for that repo and no `prune blocked` line for it (prune is repo-wide and would also drop a dead harness entry). Show `git -C <main> worktree prune --dry-run`; it names entries by id (`worktrees/<id>`), not path, so match ids against the audit's worktree rows. The user approves the whole preview | `git -C <main> worktree prune`, then show `git -C <main> worktree list` |
 | duplicate clone | run `git -C <clone> worktree list`: any line besides the clone itself → stop. Then show its local branches, stashes and tags (`refs` column) | `rm -r <path>` only after the user confirms those are disposable. Git objects are read-only files, so an interactive `rm -r` prompts per file; answer the prompts or run it non-interactively, never add `-f` by reflex |
 | idle repo | none | report only; archiving is the user's call |
 

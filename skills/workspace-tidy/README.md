@@ -54,7 +54,7 @@ present, plain tabs otherwise.
 | Section | Columns |
 |---|---|
 | repos | path, host, group, name, branch, default branch, dirty files, upstream state, days since last commit, open MRs, expected path, refs (local branches, stashes, tags, linked worktrees) |
-| worktrees | main repo, path, branch, state (ok, locked, missing, prunable, unknown), placement (in, harness, outside), dirty, upstream, age, open MRs |
+| worktrees | main repo, path, branch, state (ok, locked, missing, prunable, unknown), placement (in, harness, outside), dirty, upstream, age, open MRs, note (`default-branch`) |
 | drift | unreadable repo, no origin, wrong folder name, wrong path, duplicate clones, worktree outside `.worktrees/<repo>/<slug>`, dead or missing link, unscanned deep repo, plain folder, hidden folder, loose file |
 | cleanup candidates | git-confirmed dead links; clean + pushed worktrees whose last commit is 14 days old; duplicate clones with no linked worktrees, local refs listed; repos idle 90 days. Locked, dirty, unpushed, detached, harness-managed, open-MR or unknown items never appear. Evidence only, it removes nothing |
 

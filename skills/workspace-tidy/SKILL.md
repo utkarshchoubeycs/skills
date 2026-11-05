@@ -50,7 +50,8 @@ Rules, in order of priority:
 Known limits, declare them in the workspace README when they apply: two repos with the same
 name in different groups share a worktree folder name; branches `feat/x` and `feat-x` share a
 slug. Resolve by hand with a suffix and note it. The audit scans 5 folder levels and skips
-`node_modules`; deeper repos are listed as unscanned.
+`node_modules`; deeper repos are listed as unscanned, and a top-level folder that holds only
+deeper repos is flagged instead of being called plain.
 
 Why remote namespace and not architecture layers: layers live inside a service, not across
 repos. A repo's layer changes; its remote group does not. The rule needs no judgement.
@@ -59,7 +60,7 @@ repos. A repo's layer changes; its remote group does not. The rule needs no judg
 
 Plain `key value` lines, first two whitespace-separated fields only. Read with awk, never
 sourced. Missing file means defaults: `worktrees .worktrees`, `docs docs`, `root-group root`.
-Every value must be a relative path with no `..`; the audit refuses the file otherwise.
+Every value must be present and a relative path with no `..`; the audit refuses the file otherwise.
 
 ```
 worktrees  .worktrees
@@ -105,7 +106,7 @@ files; the script itself never writes.
    name **after** its rename. A `DETACHED` worktree has no slug: list it, ask. The user vetoes
    renames and names each delete. Nothing moves before that answer.
 2. Precondition check, stop on any hit and ask: a destination path that already exists, or has
-   an ancestor that is itself a repo; a repo or worktree with `dirty` not `0`; any `unknown`,
+   an ancestor that is itself a repo (the workspace root as the optional small repo is fine); a repo or worktree with `dirty` not `0`; any `unknown`,
    `broken` or `?`; any worktree in state `missing`; a `locked` worktree. An untracked folder
    that is a registered worktree of that repo does not count as dirty. A pre-existing
    `prunable` link is a cleanup candidate, not a stop.
@@ -159,7 +160,7 @@ approves:
 | Candidate | Command | Then |
 |---|---|---|
 | stale worktree | `git -C <main> worktree remove <path>` | offer `git -C <main> branch -d <branch>` as a second yes; if git refuses, stop, never `-D`. Offer `git -C <main> push origin --delete <branch>` as a third yes. |
-| dead link (prunable) | show `git -C <main> worktree prune --dry-run`; the user approves the whole preview, since prune cannot take one path | `git -C <main> worktree prune`, then show `git -C <main> worktree list` |
+| dead link (prunable) | show `git -C <main> worktree prune --dry-run`; the user approves the whole preview, since prune cannot take one path. If the preview lists a harness path (`.claude/worktrees/`), stop: the harness owns that entry | `git -C <main> worktree prune`, then show `git -C <main> worktree list` |
 | duplicate clone | run `git -C <clone> worktree list`: any line besides the clone itself → stop. Then show its local branches, stashes and tags (`refs` column) | `rm -r <path>` only after the user confirms those are disposable. Git objects are read-only files, so an interactive `rm -r` prompts per file; answer the prompts or run it non-interactively, never add `-f` by reflex |
 | idle repo | none | report only; archiving is the user's call |
 

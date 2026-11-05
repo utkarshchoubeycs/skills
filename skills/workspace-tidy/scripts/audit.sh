@@ -70,8 +70,8 @@ default_branch() {
 }
 branch_of() { git -C "$1" symbolic-ref --short HEAD 2>/dev/null || { git -C "$1" rev-parse --verify -q HEAD >/dev/null 2>&1 && echo "DETACHED" || echo "unknown"; }; }
 dirty_of()  {  # $1 dir, $2 optional newline list of relative paths to ignore (registered worktrees inside the repo)
-  local o; o=$(git -C "$1" status --porcelain --untracked-files=normal 2>/dev/null) || { echo "unknown"; return; }
-  printf '%s\n' "$o" | SKIP="${2:-}" awk 'BEGIN{n=split(ENVIRON["SKIP"],s,"\n")} NF{p=substr($0,4); k=1; for(i=1;i<=n;i++) if(s[i]!="" && index(s[i],p)==1) k=0; c+=k} END{print c+0}'   # ENVIRON: -v mangles newlines and backslashes
+  local o; o=$(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null) || { echo "unknown"; return; }   # =all: never a grouped "?? dir/" that could hide files
+  printf '%s\n' "$o" | SKIP="${2:-}" awk 'BEGIN{n=split(ENVIRON["SKIP"],s,"\n")} NF{p=substr($0,4); k=1; for(i=1;i<=n;i++) if(s[i]!="" && index(p,s[i])==1) k=0; c+=k} END{print c+0}'   # ENVIRON: -v mangles newlines and backslashes
 }
 age_days()  { local t; t=$(git -C "$1" log -1 --format=%ct 2>/dev/null) && [ -n "$t" ] && echo $(( (NOW - t) / 86400 )) || echo "unknown"; }
 upstream_of() {  # pushed | ahead=N | never-pushed | detached | unknown. "pushed" needs a remote-tracking ref of the same branch name.

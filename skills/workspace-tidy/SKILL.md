@@ -36,7 +36,7 @@ Rules, in order of priority:
 
 1. **Folder name = remote repo name.** `git remote get-url origin` decides, not the human.
    A repo with no origin cannot be placed; the audit reports it and the user decides.
-2. **Group = remote group.** `gitlab.com/acme/platform/auth.git` lives at `platform/auth/`.
+2. **Group = remote group.** `gitlab.com/acme/backend/auth.git` lives at `backend/auth/`.
    `workspace.conf` maps a remote group to a different folder. Repos with no subgroup go
    to the folder named by `root-group`.
 3. **Worktrees live in one hidden dir**, `.worktrees/<repo>/<branch-slug>/`, where `<repo>`
@@ -65,15 +65,15 @@ Every value must be present and a relative path with no `..`; the audit refuses 
 ```
 worktrees  .worktrees
 docs       docs
-root-group legacy
-group  acme/platform      platform
-group  acme/platform-v2   platform-v2
-group  oldcorp            legacy
+root-group misc
+group  acme/backend      backend
+group  acme/mobile       mobile
+group  acme/infra-tools  tools
 ```
 
 `group <remote-group> <folder>` matches the remote group exactly or as a prefix. The longest
-matching prefix wins, and the remainder is kept: `acme/platform/foundation/sdk` lands at
-`platform/foundation/sdk`. Set `WORKSPACE_CONF=<path>` to audit with a conf that is not in
+matching prefix wins, and the remainder is kept: `acme/backend/shared/sdk` lands at
+`backend/shared/sdk`. Set `WORKSPACE_CONF=<path>` to audit with a conf that is not in
 place yet.
 
 ## Procedures

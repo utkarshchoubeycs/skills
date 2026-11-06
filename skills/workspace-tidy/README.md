@@ -4,22 +4,22 @@ One layout rule and one read-only audit for a folder full of git repos and workt
 
 | Before | After |
 |---|---|
-| 70+ folders at root, 8 hidden `.wt-*`, three clones of one service under three names, diagrams loose beside repos | 7 group folders, every worktree under `.worktrees/`, every note under `docs/`, one README that says where things are |
+| repos, worktrees, duplicate clones and loose files side by side at root | one folder per remote group, every worktree under `.worktrees/`, every note under `docs/` |
 
 ## The rule
 
 ```
 <workspace>/
   README.md  CLAUDE.md  workspace.conf
-  platform/      auth-service  billing  shared-libs
-  platform-v2/   auth-service-v2  shared-libs-v2
-  legacy/        old-portal  old-scheduler
-  docs/          diagrams/  notes/  security/
-  .worktrees/    auth-service/feat-webhooks  shared-libs-v2/fix-routes
+  backend/       auth  billing  shared
+  mobile/        ios  android
+  tools/         ci-images
+  docs/          diagrams/  notes/
+  .worktrees/    auth/feat-webhooks  ios/fix-login
 ```
 
 1. Folder name = remote repo name.
-2. Group folder = remote group (`gitlab.com/acme/platform/auth` lives at `platform/auth`).
+2. Group folder = remote group (`gitlab.com/acme/backend/auth` lives at `backend/auth`).
 3. Worktrees live only in `.worktrees/<repo>/<branch-slug>/`.
 4. Everything that is not a repo lives in `docs/`.
 
@@ -71,10 +71,10 @@ value means git failed for that item.
 ```
 worktrees  .worktrees
 docs       docs
-root-group legacy
-group  acme/platform     platform
-group  acme/platform-v2  platform-v2
-group  oldcorp           legacy
+root-group misc
+group  acme/backend      backend
+group  acme/mobile       mobile
+group  acme/infra-tools  tools
 ```
 
 Longest matching `group` prefix wins. See `examples/workspace.conf`.
